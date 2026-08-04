@@ -1,0 +1,25 @@
+# Python Cache (Ye aapke pycache ko GitHub par jaane se rokega)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments (Ye .venv ko rokega)
+.venv/
+venv/
+env/
+
+# OS generated files
+.DS_Store# Python Cache (Ye aapke pycache ko GitHub par jaane se rokega)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments (Ye .venv ko rokega)
+.venv/
+venv/
+env/
+
+# OS generated files
+.DS_Store
