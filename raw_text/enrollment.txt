@@ -1,4 +1,4 @@
-ENFOLLMENT FORM
+ENFOLLMENTFORM
 
 Member Name: John Doe
 
@@ -13,3 +13,5 @@ Enrollment Date: 2028-01-15,
 Coverage Type: PPO
 
 Signature: John Dos
+
+[Note: OCR misread some fields - e.g., "ENROLLMENT" as "ENFOLLMENT", date "2023" as "2028", "Doe" as "Dos". Demonstrates typical OCR accuracy limitations.]

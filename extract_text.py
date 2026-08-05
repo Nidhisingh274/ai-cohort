@@ -51,8 +51,13 @@ except Exception as e:
 # 4. Scrape FAQ Webpage
 print("Scraping FAQ Webpage...")
 try:
-    response = requests.get("https://example.com")
+    response = requests.get("https://www.healthcare.gov/glossary/")
     soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Remove nav, footer, script, style tags to keep only main content
+    for tag in soup(["nav", "footer", "script", "style", "header"]):
+        tag.decompose()
+
     web_text = soup.get_text(separator='\n', strip=True)
     with open("raw_text/faq_scraped.txt", "w", encoding="utf-8") as f:
         f.write(web_text)
