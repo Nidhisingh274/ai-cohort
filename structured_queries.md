@@ -36,4 +36,4 @@
 `SELECT procedure, COUNT(*) as claim_count FROM claims GROUP BY procedure ORDER BY claim_count DESC LIMIT 2;`
 **Output:**
 - X-ray | 3
-- Surgery | 2s
+- Surgery | 2
