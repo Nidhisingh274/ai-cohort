@@ -1,4 +1,4 @@
-# Python Cache (Ye aapke pycache ko GitHub par jaane se rokega)
+# Python Cache
 __pycache__/
 *.pyc
 *.pyo
@@ -11,13 +11,9 @@ env/
 
 # OS generated files
 .DS_Store
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# OS generated files
-.DS_Store
 
 # Local vector database (Chroma)
 chroma_data/
+
+# Environment variables (API keys - NEVER commit)
+.env 
