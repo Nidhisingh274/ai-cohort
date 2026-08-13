@@ -1,0 +1,69 @@
+[
+  {
+    "question": "Is an X-ray covered under plan P101?",
+    "tool_used": "check_coverage",
+    "arguments": {
+      "plan_id": "P101",
+      "procedure": "X-ray"
+    },
+    "result": {
+      "plan_id": "P101",
+      "procedure": "X-ray",
+      "covered": true,
+      "notes": "Based on standard plan coverage. Confirm with support for exact terms."
+    }
+  },
+  {
+    "question": "What's the status of claim C1001?",
+    "tool_used": "get_claim_status",
+    "arguments": {
+      "claim_id": "C1001"
+    },
+    "result": {
+      "claim_id": "C1001",
+      "status": "Pending",
+      "procedure": "X-ray",
+      "claim_amount": 250.0
+    }
+  },
+  {
+    "question": "Can you give me the full details of plan P102?",
+    "tool_used": "get_plan_details",
+    "arguments": {
+      "plan_id": "P102"
+    },
+    "result": {
+      "plan_id": "P102",
+      "plan_name": "Silver HMO",
+      "monthly_premium": 300.0,
+      "annual_deductible": 1500.0,
+      "copay_pct": 20.0
+    }
+  },
+  {
+    "question": "How much would I pay out of pocket for surgery on plan P101?",
+    "tool_used": "estimate_out_of_pocket_cost",
+    "arguments": {
+      "plan_id": "P101",
+      "procedure": "Surgery"
+    },
+    "result": {
+      "plan_id": "P101",
+      "procedure": "Surgery",
+      "estimated_cost": 500.0,
+      "notes": "Estimate based on 10% copay on a typical $5000 procedure cost."
+    }
+  },
+  {
+    "question": "Is a checkup covered under plan P103?",
+    "tool_used": "error",
+    "arguments": null,
+    "result": "Tool call generation failed: Error code: 400 - {'error': {'message': \"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", 'type': 'invalid_request_error', 'code': 'tool_use_failed', 'failed_generation': '<function=check_coverage>{\"plan_id\": \"P103\", \"procedure\": \"checkup\"}<function>\\n\\n<function=get_plan_details>{\"plan_id\": \"P103\"}<function>'}}"
+  },
+  {
+    "question": "What is a deductible in general?",
+    "tool_used": "none",
+    "arguments": null,
+    "result": null
+  }
+]
