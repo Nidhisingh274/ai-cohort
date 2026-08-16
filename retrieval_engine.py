@@ -1,6 +1,9 @@
+import os
 import sqlite3
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.db")
 
 # =====================
 # Setup: connect to SQL and Vector DB once
@@ -55,7 +58,7 @@ def sql_lookup(question):
     Uses simple template matching - looks for plan names or claim IDs
     mentioned in the question.
     """
-    conn = sqlite3.connect("coverage.db")
+    conn = sqlite3.connect(DB_PATH)
     q_lower = question.lower()
     results = []
 
