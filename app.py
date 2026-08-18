@@ -39,29 +39,53 @@ if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
     # =====================
-    # STEP 3: POST to /chat endpoint via requests
+    # STEP 3-6: Stream the response from /chat with stream=True
     # =====================
-    with st.spinner("Thinking..."):
-        try:
-            response = requests.post(
-                BACKEND_URL,
-                json={
-                    "session_id": st.session_state.session_id,
-                    "member_id": "M1001",
-                    "message": user_input
-                },
-                timeout=30
-            )
-            response.raise_for_status()
-            data = response.json()
-            answer = data.get("answer", "Sorry, I couldn't generate a response.")
-        except requests.exceptions.RequestException as e:
-            answer = f"Error connecting to the backend: {str(e)}. Please make sure the backend server is running."
-
-    # Show the assistant's reply
     with st.chat_message("assistant"):
-        st.write(answer)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+        message_placeholder = st.empty()  # STEP 3: placeholder to update as tokens arrive
+        full_answer = ""
+
+        try:
+            with st.spinner("Thinking..."):
+                # STEP 3: stream=True tells requests not to wait for the full response
+                response = requests.post(
+                    BACKEND_URL,
+                    json={
+                        "session_id": st.session_state.session_id,
+                        "member_id": "M1001",
+                        "message": user_input
+                    },
+                    stream=True,
+                    timeout=30
+                )
+                response.raise_for_status()
+
+            # STEP 3: Iterate over the streamed lines as they arrive
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                if line.startswith("data: "):
+                    token = line[len("data: "):]
+
+                    if token == "[DONE]":
+                        break
+                    elif token.startswith("[ERROR]"):
+                        full_answer = token
+                        break
+                    else:
+                        full_answer += token
+                        # STEP 4: update the placeholder so the answer "types out"
+                        message_placeholder.write(full_answer)
+
+        except requests.exceptions.Timeout:
+            # STEP 6: handle a dropped connection / timeout mid-stream
+            full_answer = "The response took too long and timed out. Please try again."
+        except requests.exceptions.RequestException as e:
+            full_answer = f"Error connecting to the backend: {str(e)}. Please make sure the backend server is running."
+
+        message_placeholder.write(full_answer)
+
+    st.session_state.messages.append({"role": "assistant", "content": full_answer})
 
 # =====================
 # STEP 5: Sidebar with plan selector and "New conversation" button
