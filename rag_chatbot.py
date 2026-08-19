@@ -67,18 +67,26 @@ Question: {question}"""
 def retrieve_and_answer(question):
     """
     Full RAG pipeline: retrieve relevant context, then generate a
-    grounded answer using the LLM.
+    grounded answer using the LLM. Also returns citation chunk IDs
+    (Day 19) - the vector-search chunk IDs whose text was passed into
+    the context, so the frontend can show "Policy sources".
     """
     retrieval_result = retrieve(question)
     context = retrieval_result["context"]
 
     answer = generate_answer(question, context)
 
+    # =====================
+    # STEP 1: Track which chunk IDs were passed into context (citations)
+    # =====================
+    citation_ids = [chunk["id"] for chunk in retrieval_result.get("vector_results", [])]
+
     return {
         "question": question,
         "classification": retrieval_result["classification"],
         "context": context,
-        "answer": answer
+        "answer": answer,
+        "citations": citation_ids
     }
 
 
