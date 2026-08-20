@@ -178,8 +178,8 @@ if user_input:
         retrieval_result_for_ui = None
         try:
             retrieval_result_for_ui = retrieve(user_input)
-        except Exception as e:
-            st.error(f"Debug - citation fetch failed: {e}")
+        except Exception:
+            pass
 
         if retrieval_result_for_ui:
             citation_ids = [chunk["id"] for chunk in retrieval_result_for_ui.get("vector_results", [])]
