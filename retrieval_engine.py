@@ -8,16 +8,17 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.db"
 # =====================
 # Setup: connect to SQL and Vector DB once
 # =====================
-print("Loading embedding model...")
+print("Loading embedding model...", file=sys.stderr)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def embed(text):
     return model.encode(text).tolist()
 
-client = chromadb.PersistentClient(path="./chroma_data")
+CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_data")
+client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = client.get_or_create_collection(name="coverage_kb")
 
-print("Retrieval engine ready.\n")
+print("Retrieval engine ready.\n", file=sys.stderr)
 
 # =====================
 # STEP 1: Question Classifier
