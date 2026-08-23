@@ -1,4 +1,5 @@
 import os
+import sys
 import sqlite3
 import chromadb
 from sentence_transformers import SentenceTransformer
