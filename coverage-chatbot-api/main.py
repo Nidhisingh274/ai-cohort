@@ -13,6 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from retrieval_engine import retrieve, DB_PATH
 from rag_chatbot import generate_answer, client, MODEL_NAME
+from redact_pii import redact_pii
 
 app = FastAPI()
 
@@ -163,6 +164,9 @@ def chat(request: ChatRequest):
     # STEP 2: persist the user's message immediately
     save_turn(request.session_id, "user", request.message)
 
+    # Day 25: log the incoming message with PHI/PII redacted
+    print(f"[CHAT] session={request.session_id} message={redact_pii(request.message)}")
+
     def event_generator():
         full_answer = ""
         try:
@@ -222,6 +226,9 @@ Question: {request.message}"""
 
             # STEP 2: persist the assistant's reply
             save_turn(request.session_id, "assistant", full_answer)
+
+            # Day 25: log the outgoing answer with PHI/PII redacted
+            print(f"[CHAT] session={request.session_id} answer={redact_pii(full_answer)}")
 
             elapsed = time.time() - start_time
             print(f"[INFO] session={request.session_id} time={elapsed:.2f}s classification={retrieval_result['classification']}")
