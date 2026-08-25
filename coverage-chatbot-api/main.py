@@ -1,8 +1,11 @@
 import sys
 import os
 import time
+import csv
+import hashlib
 import sqlite3
 import traceback
+from collections import defaultdict, deque
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,8 +17,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from retrieval_engine import retrieve, DB_PATH
 from rag_chatbot import generate_answer, client, MODEL_NAME
 from redact_pii import redact_pii
+from token_utils import count_tokens, count_message_tokens
 
 app = FastAPI()
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # =====================
 # STEP 1: conversations table (persisted memory)
@@ -61,15 +67,122 @@ def load_history(session_id):
 
 
 # =====================
-# STEP 4: Token counting (tiktoken)
+# Day 20: Token counting (tiktoken)
 # =====================
 _encoding = tiktoken.get_encoding("cl100k_base")
 
-def count_tokens(text):
-    return len(_encoding.encode(text))
-
 def count_history_tokens(history):
     return sum(count_tokens(t["content"]) for t in history)
+
+
+# =====================
+# Day 26 STEP 2: usage + cost logging to CSV
+#
+# Groq publishes per-million-token pricing for openai/gpt-oss-20b; the
+# per-1K rates below are derived from that. They are estimates for
+# budgeting, not billing figures.
+# =====================
+USAGE_CSV = os.path.join(ROOT, "token_usage.csv")
+INPUT_COST_PER_1K = 0.0001    # $0.10 per 1M input tokens
+OUTPUT_COST_PER_1K = 0.0005   # $0.50 per 1M output tokens
+
+
+def estimate_cost(input_tokens, output_tokens):
+    """Estimated USD cost for one request, from published per-1K rates."""
+    return round(
+        (input_tokens / 1000) * INPUT_COST_PER_1K
+        + (output_tokens / 1000) * OUTPUT_COST_PER_1K,
+        8,
+    )
+
+
+def log_usage(session_id, input_tokens, output_tokens, cached=False):
+    """Append one row to token_usage.csv, creating it with a header if needed."""
+    cost = estimate_cost(input_tokens, output_tokens)
+    new_file = not os.path.exists(USAGE_CSV)
+    try:
+        with open(USAGE_CSV, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow([
+                    "session_id", "timestamp", "input_tokens",
+                    "output_tokens", "estimated_cost", "cached",
+                ])
+            writer.writerow([
+                session_id, datetime.now().isoformat(),
+                input_tokens, output_tokens, cost, cached,
+            ])
+    except Exception as e:
+        print(f"[USAGE] Could not write usage log: {e}")
+    print(f"[USAGE] session={session_id} input_tokens={input_tokens} "
+          f"output_tokens={output_tokens} estimated_cost=${cost:.8f} cached={cached}")
+    return cost
+
+
+# =====================
+# Day 26 STEP 3: rate limiter - per member, per minute
+# =====================
+RATE_LIMIT_PER_MINUTE = 10
+RATE_WINDOW_SECONDS = 60
+_request_times = defaultdict(deque)
+
+
+def check_rate_limit(member_id):
+    """
+    Sliding-window counter. Returns True if the request is allowed,
+    False if this member has exceeded RATE_LIMIT_PER_MINUTE in the last minute.
+    """
+    now = time.time()
+    window = _request_times[member_id]
+
+    while window and now - window[0] > RATE_WINDOW_SECONDS:
+        window.popleft()
+
+    if len(window) >= RATE_LIMIT_PER_MINUTE:
+        print(f"[RATE LIMIT] member={member_id} exceeded "
+              f"{RATE_LIMIT_PER_MINUTE} requests/minute")
+        return False
+
+    window.append(now)
+    return True
+
+
+# =====================
+# Day 26 STEP 4: exact-match cache for general questions only
+#
+# Member-specific questions are never cached: a claim ID, a member ID, or
+# possessive phrasing ("my claim") means the answer depends on who is
+# asking and on data that can change between calls.
+# =====================
+_response_cache = {}
+
+MEMBER_SPECIFIC_MARKERS = [
+    "my claim", "my claims", "claim status", "status of claim",
+    "my member", "member id", "my deductible", "my premium",
+    "my copay", "my plan", "my coverage", "my out-of-pocket",
+]
+
+
+def is_cacheable(question):
+    """A question is cacheable only if it is general, not member-specific."""
+    lowered = question.lower()
+
+    # Any claim ID or member ID makes it member-specific
+    import re
+    if re.search(r"\b[CM]\d{4,}\b", question, re.IGNORECASE):
+        return False
+
+    for marker in MEMBER_SPECIFIC_MARKERS:
+        if marker in lowered:
+            return False
+
+    return True
+
+
+def cache_key(question):
+    """Hash of the normalized question, so whitespace/case don't create misses."""
+    normalized = " ".join(question.lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 # =====================
@@ -95,7 +208,7 @@ def detect_plan(history):
 
 
 # =====================
-# STEP 4: Summarize the oldest turns with one LLM call
+# Day 20 STEP 4: Summarize the oldest turns with one LLM call
 # =====================
 def summarize_turns(turns):
     conversation_text = "\n".join([f"{t['role']}: {t['content']}" for t in turns])
@@ -116,17 +229,11 @@ Summary:"""
     return response.choices[0].message.content
 
 
-MAX_RECENT_TURNS = 10   # STEP 3: last N turns kept directly in context
-TOKEN_THRESHOLD = 2000  # STEP 4: summarize once history exceeds this
+MAX_RECENT_TURNS = 10
+TOKEN_THRESHOLD = 2000
 
 
 def build_effective_history(session_id):
-    """
-    STEP 3 + STEP 4: builds the conversation context sent to the LLM.
-    Always includes the last MAX_RECENT_TURNS directly. If FULL history
-    exceeds TOKEN_THRESHOLD tokens, summarizes everything older than the
-    last MAX_RECENT_TURNS turns into one LLM summary, replacing them.
-    """
     full_history = load_history(session_id)
     tokens_before = count_history_tokens(full_history)
 
@@ -161,19 +268,45 @@ class ChatRequest(BaseModel):
 def chat(request: ChatRequest):
     start_time = time.time()
 
+    # Day 26 STEP 3: rate limit before doing any work
+    if not check_rate_limit(request.member_id):
+        raise HTTPException(
+            status_code=429,
+            detail=f"You've sent too many requests. Please wait a moment and try again.",
+        )
+
     # STEP 2: persist the user's message immediately
     save_turn(request.session_id, "user", request.message)
 
     # Day 25: log the incoming message with PHI/PII redacted
     print(f"[CHAT] session={request.session_id} message={redact_pii(request.message)}")
 
+    # Day 26 STEP 4: serve from cache if this is a repeated general question
+    cacheable = is_cacheable(request.message)
+    key = cache_key(request.message) if cacheable else None
+
+    if cacheable and key in _response_cache:
+        cached_answer = _response_cache[key]
+        print(f"[CACHE HIT] session={request.session_id} question={redact_pii(request.message)}")
+        save_turn(request.session_id, "assistant", cached_answer)
+        log_usage(request.session_id, 0, 0, cached=True)
+
+        def cached_generator():
+            yield f"data: {cached_answer}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(cached_generator(), media_type="text/event-stream")
+
+    if cacheable:
+        print(f"[CACHE MISS] session={request.session_id} question={redact_pii(request.message)}")
+    else:
+        print(f"[CACHE SKIP] member-specific question, not cached")
+
     def event_generator():
         full_answer = ""
         try:
-            # STEP 3-4: build conversation memory (recent turns + summary if needed)
             effective_history, tokens_before, tokens_after, summarized = build_effective_history(request.session_id)
 
-            # STEP 3: remember which plan the member already specified
             plan_id, plan_name = detect_plan(effective_history)
 
             retrieval_result = retrieve(request.message)
@@ -209,8 +342,10 @@ licensed healthcare provider."""
 Question: {request.message}"""
             messages.append({"role": "user", "content": user_message})
 
-            # STEP 6: log token counts for this request
             print(f"[MEMORY] session={request.session_id} tokens_before={tokens_before} tokens_after={tokens_after} summarized={summarized}")
+
+            # Day 26 STEP 1: count prompt tokens before the call
+            input_tokens = count_message_tokens(messages)
 
             stream = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -224,8 +359,15 @@ Question: {request.message}"""
                     full_answer += token
                     yield f"data: {token}\n\n"
 
-            # STEP 2: persist the assistant's reply
+            # Day 26 STEP 1-2: count completion tokens and log usage + cost
+            output_tokens = count_tokens(full_answer)
+            log_usage(request.session_id, input_tokens, output_tokens, cached=False)
+
             save_turn(request.session_id, "assistant", full_answer)
+
+            # Day 26 STEP 4: store general answers in the cache
+            if cacheable and key:
+                _response_cache[key] = full_answer
 
             # Day 25: log the outgoing answer with PHI/PII redacted
             print(f"[CHAT] session={request.session_id} answer={redact_pii(full_answer)}")
