@@ -26,7 +26,10 @@ print("Retrieval engine ready.\n", file=sys.stderr)
 # =====================
 STRUCTURED_KEYWORDS = [
     "deductible", "premium", "copay", "claim status", "claim id",
-    "how much", "cost", "price", "status of claim", "monthly"
+    "how much", "cost", "price", "status of claim", "monthly",
+    # Day 27 fix: claim-detail phrasing was routing to vector search only,
+    # so claim rows never reached the context (see ragas_scorecard.md).
+    "procedure", "filed", "date filed", "when was", "claim amount",
 ]
 
 UNSTRUCTURED_KEYWORDS = [

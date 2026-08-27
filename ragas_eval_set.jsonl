@@ -1,0 +1,18 @@
+{"question": "What is the annual deductible for the Gold PPO plan?", "ground_truth": "The annual deductible for the Gold PPO plan is $2,000.", "category": "deductibles"}
+{"question": "What is the annual deductible for the Silver HMO plan?", "ground_truth": "The annual deductible for the Silver HMO plan is $1,500.", "category": "deductibles"}
+{"question": "What is the annual deductible for the Bronze HMO plan?", "ground_truth": "The annual deductible for the Bronze HMO plan is $1,000.", "category": "deductibles"}
+{"question": "What happens after I meet my deductible on the Gold PPO plan?", "ground_truth": "After meeting the $2,000 annual deductible on the Gold PPO plan, the member pays a 10% copay on covered services.", "category": "deductibles"}
+{"question": "What is the monthly premium for the Silver HMO plan?", "ground_truth": "The monthly premium for the Silver HMO plan is $300.", "category": "plan comparisons"}
+{"question": "Which plan has the lowest monthly premium?", "ground_truth": "The Bronze HMO plan has the lowest monthly premium at $150 per month.", "category": "plan comparisons"}
+{"question": "Which plan has the lowest annual deductible?", "ground_truth": "The Bronze HMO plan has the lowest annual deductible at $1,000.", "category": "plan comparisons"}
+{"question": "How does the Gold PPO copay compare to the Bronze HMO copay?", "ground_truth": "The Gold PPO plan has a 10% copay, while the Bronze HMO plan has a 30% copay, so the Gold PPO copay is lower.", "category": "plan comparisons"}
+{"question": "What network type does the Gold PPO plan use?", "ground_truth": "The Gold PPO plan uses a nationwide PPO network.", "category": "plan comparisons"}
+{"question": "What is the out-of-pocket maximum on the Gold PPO plan?", "ground_truth": "The out-of-pocket maximum on the Gold PPO plan is $5,000 per year.", "category": "plan comparisons"}
+{"question": "What does the Gold PPO plan cover?", "ground_truth": "The Gold PPO plan covers preventive care, hospital visits, and prescriptions.", "category": "exclusions"}
+{"question": "Is physical therapy covered under the Silver HMO plan?", "ground_truth": "The plan documents do not state whether physical therapy is covered under the Silver HMO plan, so the member should contact member support.", "category": "exclusions"}
+{"question": "Does the Bronze HMO plan cover dental cleanings?", "ground_truth": "The plan documents do not state whether dental cleanings are covered under the Bronze HMO plan, so the member should contact member support.", "category": "exclusions"}
+{"question": "What is the vision benefit on the Gold PPO plan?", "ground_truth": "The plan documents do not state a vision benefit for the Gold PPO plan, so the member should contact member support.", "category": "exclusions"}
+{"question": "What is the status of claim C1001?", "ground_truth": "Claim C1001 is currently Pending.", "category": "claims status"}
+{"question": "How much was claim C1001 for?", "ground_truth": "Claim C1001 was for $250.", "category": "claims status"}
+{"question": "What procedure was claim C1001 filed for?", "ground_truth": "Claim C1001 was filed for an X-ray.", "category": "claims status"}
+{"question": "When was claim C1001 filed?", "ground_truth": "Claim C1001 was filed on April 1, 2023.", "category": "claims status"}
