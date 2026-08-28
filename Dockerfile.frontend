@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+
+# =====================
+# Stage 1: builder - installs dependencies into a virtualenv
+# =====================
+FROM python:3.13-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Use the CPU-only PyTorch build - this machine has no GPU, and the CUDA
+# packages would add roughly 8GB to the image for no benefit
+COPY requirements-docker.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+       --extra-index-url https://pypi.org/simple \
+       -r requirements-docker.txt
+
+# =====================
+# Stage 2: final - slim runtime
+# =====================
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+# The Streamlit app plus the modules and data it imports at runtime
+COPY app.py retrieval_engine.py response_cards.py rag_chatbot.py ./
+COPY coverage.db ./
+COPY data/ ./data/
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]

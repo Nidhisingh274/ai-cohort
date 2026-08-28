@@ -1,0 +1,3 @@
+CONTAINER ID   IMAGE                      COMMAND                  CREATED         STATUS                    PORTS                    NAMES
+abc123def456   my-first-app-backend       "uvicorn main:app …"     2 minutes ago   Up 2 minutes (healthy)    0.0.0.0:8000->8000/tcp   coverage-backend
+def456abc123   my-first-app-frontend      "streamlit run app.py"   2 minutes ago   Up 2 minutes              0.0.0.0:8501->8501/tcp   coverage-frontend

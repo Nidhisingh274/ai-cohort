@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coverage-backend
+    ports:
+      - "8000:8000"
+    # STEP 4: API keys come from .env only - never hardcoded here
+    env_file:
+      - .env
+    # STEP 4: Chroma's local data is mounted, not baked into the image,
+    # so the vector store persists across rebuilds
+    volumes:
+      - ./chroma_data:/app/chroma_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: coverage-frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./chroma_data:/app/chroma_data
+    # The frontend talks to the backend by service name on the compose network
+    environment:
+      - BACKEND_URL=http://backend:8000/chat
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
