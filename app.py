@@ -14,7 +14,9 @@ from response_cards import ClaimStatusCard, CoverageSummaryCard
 st.set_page_config(page_title="Coverage Chatbot", page_icon="💬")
 st.title("💬 Coverage Chatbot")
 
-BACKEND_URL = "http://127.0.0.1:8000/chat"
+# Inside Docker the backend is reachable by service name; locally it stays
+# on 127.0.0.1, so the value comes from the environment with a local default.
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000/chat")
 
 # =====================
 # STEP 1-2: Fetch citations separately (frontend calls retrieve() directly
