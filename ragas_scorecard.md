@@ -23,7 +23,9 @@ Per-question scores are in ragas_results_baseline.csv.
 
 ### Note on answer_relevancy
 
-answer_relevancy returned NaN. The cause is a provider limitation, not a pipeline problem: RAGAS's answer_relevancy generates `strictness` variations of each question (default 3) in a single call using the OpenAI `n` parameter, and Groq's API rejects any `n` above 1 with "'n' : number must be at most 1". Setting `answer_relevancy.strictness = 1` in ragas_run.py resolves this; that line is in the runner now and the metric is expected to score on the next clean run. The three metrics that do not depend on `n` scored normally and are the basis of the analysis below.
+answer_relevancy returned NaN on the baseline run. The cause is a provider limitation, not a pipeline problem: RAGAS's answer_relevancy generates `strictness` variations of each question (default 3) in a single call using the OpenAI `n` parameter, and Groq's API rejects any `n` above 1 with "'n' : number must be at most 1". Setting `answer_relevancy.strictness = 1` in ragas_run.py resolves this. The three metrics that do not depend on `n` scored normally and are the basis of the analysis below.
+
+**Confirmed on the after-fix run:** with strictness set to 1, answer_relevancy scored 0.7348 with no NaN and no "'n' : number must be at most 1" errors across all 72 evaluation jobs.
 
 ## Weakest Metric: faithfulness (0.6094)
 
@@ -62,19 +64,37 @@ Expected effect: Q17 and Q18 should move from 0.0 to near 1.0 on faithfulness, c
 
 **Status: applied.** The keyword list in retrieval_engine.py has been extended as described. The change is additive - every keyword that was there before is still there - so questions that already routed correctly (Q15, Q16, and all the plan/deductible questions) are unaffected.
 
-**Verified at the routing level (no tokens required):** calling `classify()` directly on both questions now returns "structured" instead of "unstructured", and `retrieve()` now returns the full claim row - {'claim_id': 'C1001', 'member_id': 'M1001', 'plan_id': 'P101', 'procedure': 'X-ray', 'claim_amount': 250, 'status': 'Pending', 'date_filed': '2023-04-01 00:00:00'} - where it previously returned an empty list. Both ground-truth facts (X-ray, April 1 2023) are now present in the context the model receives. The full RAGAS re-run will confirm how much that moves the scores.
+**Verified at the routing level (no tokens required):** calling `classify()` directly on both questions now returns "structured" instead of "unstructured", and `retrieve()` now returns the full claim row - {'claim_id': 'C1001', 'member_id': 'M1001', 'plan_id': 'P101', 'procedure': 'X-ray', 'claim_amount': 250, 'status': 'Pending', 'date_filed': '2023-04-01 00:00:00'} - where it previously returned an empty list. Both ground-truth facts (X-ray, April 1 2023) are now present in the context the model receives.
 
 ## Re-Run: Before / After
 
 | Metric | Baseline | After fix | Delta |
 |---|---|---|---|
-| faithfulness | 0.6094 | pending | - |
-| answer_relevancy | not scored | pending | - |
-| context_precision | 0.6755 | pending | - |
-| context_recall | 0.7778 | pending | - |
+| faithfulness | 0.6094 | 0.7222 | +0.1128 |
+| answer_relevancy | not scored (NaN) | 0.7348 | now scoring |
+| context_precision | 0.6755 | 0.7519 | +0.0764 |
+| context_recall | 0.7778 | 0.8889 | +0.1111 |
 
-**Status:** The fix is applied and verified at the routing level. The full RAGAS re-run is pending because this project runs on Groq's free tier, which caps at 200,000 tokens per day, and RAGAS is token-heavy - each of the four metrics makes its own judge call per question, so one full 18-question evaluation costs roughly 50,000 tokens. Today's quota was exhausted mid-run ("Rate limit reached ... on tokens per day (TPD): Limit 200000, Used 198972"). The clean baseline re-run with answer_relevancy scoring and the after-fix comparison will be completed when the quota resets, and this table will be filled in with real numbers rather than estimates.
+Per-question scores: ragas_results_baseline.csv (before) and ragas_results_after-fix.csv (after).
+
+The after-fix run completed cleanly - 72/72 evaluation jobs, no rate-limit errors, no timeouts, no NaN - so these numbers come from a full evaluation rather than a partial one.
+
+### What Moved, and Why
+
+All three comparable metrics improved, and the direction matches the hypothesis. The largest gains are on faithfulness (+11.3 points) and context_recall (+11.1 points), which are exactly the two metrics that were being dragged down by Q17 and Q18 scoring 0.0 across the board. With the claim row now routed into context, the model has the facts it needs (X-ray, April 1 2023) instead of being asked to answer from nothing.
+
+A targeted smoke test on the two affected questions confirmed this directly before the full run: both "What is the status of claim C1001?" and "What procedure was claim C1001 filed for?" now score 1.0 on all four metrics. The second of those was 0.0 on all three scored metrics in the baseline.
+
+context_precision moved less (+7.6 points), which fits - precision was never the main problem. The baseline already retrieved precise context for most questions; the issue was that for two questions it retrieved nothing at all.
+
+### Is the Improvement Real?
+
+The gain is attributable to the fix rather than to run-to-run noise, for two reasons. First, the change is mechanical and verifiable independently of RAGAS: calling classify() on those two questions returned "unstructured" before and returns "structured" after, and retrieve() returned an empty SQL result before and returns the full claim row after. That is deterministic, not probabilistic. Second, the size of the move matches what two questions flipping from 0.0 to roughly 1.0 would produce on an 18-question set (2/18 = 11.1 points), which is almost exactly the observed delta on faithfulness and context_recall.
+
+What has not been fixed, and was never expected to be, is Cause 2 - the questions about physical therapy, dental cleanings, and vision benefits. Those still score low because the corpus genuinely does not contain the answers. Adding source documents is the only fix for those, and that is outside this mission's scope.
 
 ## Honest Limitations
 
 The eval set is 18 pairs on a six-chunk corpus, so a single question moving between 0 and 1 shifts a metric by roughly 5-6 points. Ground-truth answers were written by the same person who built the pipeline, which risks phrasing them in ways the pipeline happens to match. And the judge model (gpt-oss-20b) is a small model scoring another small model's output, which is noisier than using a larger judge. The scores here are useful for spotting the kind of large, structural gap that Cause 1 represents; they are not precise enough to read small differences into.
+
+Each full evaluation costs roughly 50,000 tokens against Groq's free-tier daily cap of 200,000, which is why the baseline was not re-run after the fix and the comparison uses the original baseline file. A two-question smoke test was run first to confirm the metrics scored correctly before committing tokens to the full run.
