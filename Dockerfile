@@ -15,8 +15,7 @@ WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Use the CPU-only PyTorch build - this machine has no GPU, and the CUDA
-# packages would add roughly 8GB to the image for no benefit
+# Windows-only packages (pywin32) are stripped out for the Linux container
 COPY requirements-docker.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
