@@ -17,3 +17,5 @@ chroma_data/
 
 # Environment variables (API keys - NEVER commit)
 .env 
+# Docker image tarballs (large, regenerable)
+*.tar
