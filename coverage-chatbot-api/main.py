@@ -19,13 +19,33 @@ from rag_chatbot import generate_answer, client, MODEL_NAME
 from redact_pii import redact_pii
 from token_utils import count_tokens, count_message_tokens
 
+# =====================
+# Day 30: Langfuse tracing. Keys come from .env (LANGFUSE_PUBLIC_KEY,
+# LANGFUSE_SECRET_KEY, LANGFUSE_HOST) and are never hardcoded. Every
+# tracing call is wrapped in try/except: observability must never be able
+# to break the chat itself.
+#
+# This uses the Langfuse v4 SDK, which is OpenTelemetry-based. Each LLM
+# call becomes a generation observation created with
+# start_observation(as_type="generation") and closed with end(). Latency is
+# measured automatically between those two points; the full prompt, the
+# response, token usage and estimated cost are attached to the span.
+# Session and member IDs are carried in the span metadata.
+# =====================
+try:
+    from langfuse import Langfuse
+    langfuse = Langfuse()
+    LANGFUSE_ENABLED = True
+except Exception as e:
+    print(f"[LANGFUSE] Tracing disabled: {e}")
+    langfuse = None
+    LANGFUSE_ENABLED = False
+
 app = FastAPI()
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# =====================
-# STEP 1: conversations table (persisted memory)
-# =====================
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
@@ -44,7 +64,6 @@ init_db()
 
 
 def save_turn(session_id, role, content):
-    """STEP 2: persist one chat turn to SQLite."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "INSERT INTO conversations (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
@@ -55,7 +74,6 @@ def save_turn(session_id, role, content):
 
 
 def load_history(session_id):
-    """Load FULL persisted history for a session, oldest first."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.execute(
         "SELECT role, content, timestamp FROM conversations WHERE session_id = ? ORDER BY id ASC",
@@ -66,9 +84,6 @@ def load_history(session_id):
     return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
 
 
-# =====================
-# Day 20: Token counting (tiktoken)
-# =====================
 _encoding = tiktoken.get_encoding("cl100k_base")
 
 def count_history_tokens(history):
@@ -76,19 +91,14 @@ def count_history_tokens(history):
 
 
 # =====================
-# Day 26 STEP 2: usage + cost logging to CSV
-#
-# Groq publishes per-million-token pricing for openai/gpt-oss-20b; the
-# per-1K rates below are derived from that. They are estimates for
-# budgeting, not billing figures.
+# Day 26: usage + cost logging to CSV
 # =====================
 USAGE_CSV = os.path.join(ROOT, "token_usage.csv")
-INPUT_COST_PER_1K = 0.0001    # $0.10 per 1M input tokens
-OUTPUT_COST_PER_1K = 0.0005   # $0.50 per 1M output tokens
+INPUT_COST_PER_1K = 0.0001
+OUTPUT_COST_PER_1K = 0.0005
 
 
 def estimate_cost(input_tokens, output_tokens):
-    """Estimated USD cost for one request, from published per-1K rates."""
     return round(
         (input_tokens / 1000) * INPUT_COST_PER_1K
         + (output_tokens / 1000) * OUTPUT_COST_PER_1K,
@@ -97,7 +107,6 @@ def estimate_cost(input_tokens, output_tokens):
 
 
 def log_usage(session_id, input_tokens, output_tokens, cached=False):
-    """Append one row to token_usage.csv, creating it with a header if needed."""
     cost = estimate_cost(input_tokens, output_tokens)
     new_file = not os.path.exists(USAGE_CSV)
     try:
@@ -120,7 +129,7 @@ def log_usage(session_id, input_tokens, output_tokens, cached=False):
 
 
 # =====================
-# Day 26 STEP 3: rate limiter - per member, per minute
+# Day 26: rate limiter
 # =====================
 RATE_LIMIT_PER_MINUTE = 10
 RATE_WINDOW_SECONDS = 60
@@ -128,10 +137,6 @@ _request_times = defaultdict(deque)
 
 
 def check_rate_limit(member_id):
-    """
-    Sliding-window counter. Returns True if the request is allowed,
-    False if this member has exceeded RATE_LIMIT_PER_MINUTE in the last minute.
-    """
     now = time.time()
     window = _request_times[member_id]
 
@@ -148,11 +153,7 @@ def check_rate_limit(member_id):
 
 
 # =====================
-# Day 26 STEP 4: exact-match cache for general questions only
-#
-# Member-specific questions are never cached: a claim ID, a member ID, or
-# possessive phrasing ("my claim") means the answer depends on who is
-# asking and on data that can change between calls.
+# Day 26: cache for general questions only
 # =====================
 _response_cache = {}
 
@@ -164,10 +165,8 @@ MEMBER_SPECIFIC_MARKERS = [
 
 
 def is_cacheable(question):
-    """A question is cacheable only if it is general, not member-specific."""
     lowered = question.lower()
 
-    # Any claim ID or member ID makes it member-specific
     import re
     if re.search(r"\b[CM]\d{4,}\b", question, re.IGNORECASE):
         return False
@@ -180,14 +179,10 @@ def is_cacheable(question):
 
 
 def cache_key(question):
-    """Hash of the normalized question, so whitespace/case don't create misses."""
     normalized = " ".join(question.lower().split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-# =====================
-# Plan memory - detect which plan the member has mentioned
-# =====================
 KNOWN_PLANS = {
     "gold ppo": "P101",
     "silver hmo": "P102",
@@ -207,9 +202,6 @@ def detect_plan(history):
     return plan_id, plan_name
 
 
-# =====================
-# Day 20 STEP 4: Summarize the oldest turns with one LLM call
-# =====================
 def summarize_turns(turns):
     conversation_text = "\n".join([f"{t['role']}: {t['content']}" for t in turns])
     summary_prompt = f"""Summarize the following conversation between a member and a
@@ -268,20 +260,16 @@ class ChatRequest(BaseModel):
 def chat(request: ChatRequest):
     start_time = time.time()
 
-    # Day 26 STEP 3: rate limit before doing any work
     if not check_rate_limit(request.member_id):
         raise HTTPException(
             status_code=429,
-            detail=f"You've sent too many requests. Please wait a moment and try again.",
+            detail="You've sent too many requests. Please wait a moment and try again.",
         )
 
-    # STEP 2: persist the user's message immediately
     save_turn(request.session_id, "user", request.message)
 
-    # Day 25: log the incoming message with PHI/PII redacted
     print(f"[CHAT] session={request.session_id} message={redact_pii(request.message)}")
 
-    # Day 26 STEP 4: serve from cache if this is a repeated general question
     cacheable = is_cacheable(request.message)
     key = cache_key(request.message) if cacheable else None
 
@@ -304,6 +292,7 @@ def chat(request: ChatRequest):
 
     def event_generator():
         full_answer = ""
+        generation = None
         try:
             effective_history, tokens_before, tokens_after, summarized = build_effective_history(request.session_id)
 
@@ -344,8 +333,36 @@ Question: {request.message}"""
 
             print(f"[MEMORY] session={request.session_id} tokens_before={tokens_before} tokens_after={tokens_after} summarized={summarized}")
 
-            # Day 26 STEP 1: count prompt tokens before the call
             input_tokens = count_message_tokens(messages)
+
+            # =====================
+            # Day 30: open a Langfuse generation observation for this LLM
+            # call. The span carries the full prompt as input; latency is
+            # timed automatically between start and end. Session and member
+            # IDs travel in metadata so traces can be filtered per member
+            # and per conversation in the dashboard.
+            # =====================
+            if LANGFUSE_ENABLED:
+                try:
+                    generation = langfuse.start_observation(
+                        name="groq-completion",
+                        as_type="generation",
+                        model=MODEL_NAME,
+                        input=messages,
+                        metadata={
+                            "session_id": request.session_id,
+                            "member_id": request.member_id,
+                            "question": request.message,
+                            "classification": retrieval_result["classification"],
+                            "plan_id": plan_id,
+                            "tokens_before": tokens_before,
+                            "tokens_after": tokens_after,
+                            "summarized": summarized,
+                            "cached": False,
+                        },
+                    )
+                except Exception as e:
+                    print(f"[LANGFUSE] Could not start trace: {e}")
 
             stream = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -359,17 +376,36 @@ Question: {request.message}"""
                     full_answer += token
                     yield f"data: {token}\n\n"
 
-            # Day 26 STEP 1-2: count completion tokens and log usage + cost
             output_tokens = count_tokens(full_answer)
-            log_usage(request.session_id, input_tokens, output_tokens, cached=False)
+            cost = log_usage(request.session_id, input_tokens, output_tokens, cached=False)
+
+            # =====================
+            # Day 30: close the span with the response, token usage and
+            # estimated cost. flush() is called because this is a
+            # short-lived request path - without it the span can be lost
+            # before the background exporter sends it.
+            # =====================
+            if generation is not None:
+                try:
+                    generation.update(
+                        output=full_answer,
+                        usage_details={
+                            "input": input_tokens,
+                            "output": output_tokens,
+                            "total": input_tokens + output_tokens,
+                        },
+                        metadata={"estimated_cost_usd": cost},
+                    )
+                    generation.end()
+                    langfuse.flush()
+                except Exception as e:
+                    print(f"[LANGFUSE] Could not end generation: {e}")
 
             save_turn(request.session_id, "assistant", full_answer)
 
-            # Day 26 STEP 4: store general answers in the cache
             if cacheable and key:
                 _response_cache[key] = full_answer
 
-            # Day 25: log the outgoing answer with PHI/PII redacted
             print(f"[CHAT] session={request.session_id} answer={redact_pii(full_answer)}")
 
             elapsed = time.time() - start_time
@@ -381,6 +417,17 @@ Question: {request.message}"""
             elapsed = time.time() - start_time
             print(f"[ERROR] session={request.session_id} time={elapsed:.2f}s error={str(e)}")
             traceback.print_exc()
+
+            # Day 30: record the failure on the span so error rate is
+            # visible in the dashboard, not just in local logs
+            if generation is not None:
+                try:
+                    generation.update(output=f"ERROR: {e}", level="ERROR")
+                    generation.end()
+                    langfuse.flush()
+                except Exception:
+                    pass
+
             yield f"data: [ERROR] Something went wrong while generating a response. Please try again.\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
