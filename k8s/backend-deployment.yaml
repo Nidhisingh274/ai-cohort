@@ -16,8 +16,12 @@ spec:
     spec:
       containers:
         - name: backend
-          image: my-first-app-backend:latest
-          imagePullPolicy: IfNotPresent
+          # Pulled from Docker Hub rather than loaded locally: the 3.47GB
+          # image could not be transferred into the cluster with
+          # `minikube image load` on this machine, so the registry route
+          # (the other option this mission allows) is used instead.
+          image: nidhi9/coverage-backend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:

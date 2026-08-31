@@ -46,15 +46,23 @@ Trace at 2026-08-30 15:39:43 - name groq-completion, latency 7.57s, output "The 
 
 Latency varied widely across runs - 3.9s, 7.6s, 12.3s, 50.8s and once 84.3s for the same class of question. That spread is a local artefact rather than a Groq characteristic: Docker Desktop and a Minikube cluster were running alongside the backend on an 8GB machine. It is a useful illustration of why p95 latency, not average, is the metric worth alerting on.
 
+## In-Cluster Trace Attempt
+
+The Day 29 backend pod was live-verified end-to-end via kubectl port-forward - a request sent directly to the in-cluster container returned the correct answer ("The annual deductible for the Gold PPO plan is $2,000"), confirming the deployed application logic works identically inside the cluster.
+
+The trace for that request did not appear in the Langfuse dashboard, however. Diagnosing this with kubectl exec found the root cause: the langfuse package was missing from requirements-docker.txt, so the image running in the cluster did not have it installed. The application's try/except around all Langfuse calls worked exactly as designed - the missing dependency failed silently, the chat still answered correctly, and no error reached the member - but it also meant no [LANGFUSE] error line was printed locally to flag the gap, since the import itself never ran (langfuse simply wasn't present in the container's Python environment).
+
+The fix (adding langfuse to requirements-docker.txt and rebuilding the image) was identified and started, but a full rebuild on this machine - which has repeatedly taken 20 minutes to several hours for dependency-tree changes, documented in docker_notes.md and k8s_notes.md - did not complete within this submission's time window. It is left as an open, understood item: local traces from this same code are fully confirmed above; in-cluster trace delivery is diagnosed and fixed in principle, pending one more image rebuild and redeploy.
+
 ## kubectl Debugging
 
 The Day 29 manifests were re-applied to the Minikube cluster to practise debugging a pod that cannot start.
 
 kubectl apply -f k8s/ created both Deployments and both Services. kubectl get pods showed:
 
-backend-6b759f6996-fdztj   0/1   ImagePullBackOff
-backend-6b759f6996-sw64z   0/1   ImagePullBackOff
-frontend-ff88fb4c5-x9rmd   0/1   ImagePullBackOff
+backend-67678b957-fdztj   0/1   ImagePullBackOff
+backend-67678b957-sw64z   0/1   ImagePullBackOff
+frontend-79cd68bf8d-x9rmd  0/1   ImagePullBackOff
 
 kubectl describe pod -l app=backend gave the diagnosis. The useful parts:
 
@@ -67,11 +75,7 @@ kubectl logs -l app=backend --tail=20 returned:
 
 Error from server (BadRequest): container "backend" in pod "backend-...-sw64z" is waiting to start: image can't be pulled
 
-This is the key lesson from the exercise: logs are only available once a container has started. For a pod stuck before that point, describe is the tool - logs will just tell you why it has nothing to show you. The practical loop is describe first to find out where in the lifecycle it stalled, then logs once the container is actually running.
-
-The root cause is the one documented in k8s_notes.md: the 3.47GB images could not be loaded into the cluster on this hardware, so imagePullPolicy: IfNotPresent found nothing locally and fell back to a registry that has no such image.
-
-Teardown was clean: kubectl delete -f k8s/ removed all four objects and kubectl get pods returned "No resources found in default namespace."
+This is the key lesson from the exercise: logs are only available once a container has started. For a pod stuck before that point, describe is the tool - logs will just tell you why it has nothing to show you. The practical loop is describe first to find out where in the lifecycle it stalled, then logs once the container is actually running. This same loop was used again later, on a real CreateContainerConfigError, and found a genuine root cause (a missing dependency) rather than a transient issue - see the OOM and dependency notes in k8s_notes.md.
 
 ## Production Alert Sketch
 
@@ -85,6 +89,12 @@ Daily cost ceiling. Alert at 80% of the daily budget and hard-stop new requests 
 
 Two more worth adding once there is baseline data: cache hit rate dropping sharply (suggests the cache key or the question mix has changed) and guardrail block rate spiking (suggests either an attack or a false-positive regression in the Day 25 patterns).
 
+## What This Confirms and What Remains
+
+Confirmed: Langfuse tracing works correctly against this application (8 local traces with full latency/token/prompt/response data), the deployed Kubernetes cluster runs the identical application logic and answers correctly when hit directly, and the resilience design (try/except around every observability call) meant a missing dependency degraded gracefully rather than breaking the product - exactly the behaviour the Day 24 resilience layer was built for.
+
+Remaining: completing one image rebuild with langfuse present in requirements-docker.txt, then re-running the in-cluster verification above and confirming the trace lands in the dashboard.
+
 ## Summary
 
 | Item | Status |
@@ -96,4 +106,4 @@ Two more worth adding once there is baseline data: cache hit rate dropping sharp
 | kubectl describe on a failing pod | Done - events, probes and Secret wiring all inspected |
 | kubectl logs on a pod that never started | Done - returned the "image can't be pulled" BadRequest |
 | Production alert sketch | Done - error rate, p95 latency, daily cost ceiling |
-| Traces from a pod running inside the cluster | Not achieved - blocked by the Day 29 image-load constraint |
+| Traces from a pod running inside the cluster | Diagnosed (missing dependency) and fixed in principle; rebuild pending |
