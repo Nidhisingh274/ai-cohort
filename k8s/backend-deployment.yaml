@@ -16,12 +16,12 @@ spec:
     spec:
       containers:
         - name: backend
-          # Pulled from Docker Hub rather than loaded locally: the 3.47GB
-          # image could not be transferred into the cluster with
-          # `minikube image load` on this machine, so the registry route
-          # (the other option this mission allows) is used instead.
+          # Loaded directly into the Minikube node with `minikube image
+          # load` (works once the host has enough free disk space - see
+          # k8s_notes.md). imagePullPolicy is IfNotPresent so the kubelet
+          # uses this locally loaded image instead of trying Docker Hub.
           image: nidhi9/coverage-backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           envFrom:

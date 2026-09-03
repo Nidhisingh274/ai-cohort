@@ -17,7 +17,7 @@ spec:
       containers:
         - name: frontend
           image: nidhi9/coverage-frontend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8501
           env:

@@ -14,14 +14,14 @@ kubectl get nodes confirmed: node "minikube" Ready, control-plane, v1.35.1.
 
 ## Images - Registry Route
 
-The Day 28 images could not be loaded into the cluster with `minikube image load` (see the extended troubleshooting log below), so they were pushed to Docker Hub - the other option this mission explicitly allows ("Push to a registry Minikube can reach, or minikube image load") - and pulled from there instead:
+The Day 28 images could not be loaded into the cluster with `minikube image load` on the first attempt (see the extended troubleshooting log below), so they were pushed to Docker Hub - the other option this mission explicitly allows ("Push to a registry Minikube can reach, or minikube image load") - and pulled from there instead:
 
 docker tag my-first-app-backend:latest nidhi9/coverage-backend:latest
 docker push nidhi9/coverage-backend:latest
 docker tag my-first-app-frontend:latest nidhi9/coverage-frontend:latest
 docker push nidhi9/coverage-frontend:latest
 
-Both manifests reference nidhi9/coverage-backend:latest and nidhi9/coverage-frontend:latest with imagePullPolicy: Always.
+Both manifests reference nidhi9/coverage-backend:latest and nidhi9/coverage-frontend:latest with imagePullPolicy: IfNotPresent, so the kubelet uses the locally loaded image rather than retrying Docker Hub (Always previously triggered the TLS issue described in the troubleshooting log on every pod restart).
 
 ## Manifests (k8s/)
 
@@ -92,26 +92,28 @@ Both commands ran cleanly; kubectl get pods and kubectl get all returned no reso
 
 ## Extended Troubleshooting Log - Getting Images Into the Cluster
 
-This took two full days and five distinct approaches, documented here rather than summarised away, because the diagnostic path is as useful as the eventual fix.
+This took two full days and six distinct approaches, documented here rather than summarised away, because the diagnostic path is as useful as the eventual fix.
 
 1. minikube image load my-first-app-backend:latest - ran for 15-20 minutes each of three separate attempts, returned to the prompt with no error, but minikube image ls showed only Kubernetes' own system images afterward. Silent no-op.
 2. docker compose build inside minikube docker-env - reached step 14 of 30+ after 15 minutes, stalling on downloading pyarrow.
 3. Raising minikube's memory (--memory=4096, then 5000) and rebuilding the cluster from scratch - fixed unrelated control-plane crashes but did not by itself fix the image transfer.
 4. docker save to a tarball, then minikube image load backend.tar - same silent no-op as (1).
 5. Docker Hub registry push - the images uploaded successfully, but the cluster then failed pulling with "http: server gave HTTP response to HTTPS client" against registry-1.docker.io, a Minikube/Docker-daemon TLS handshake issue. Restarting the Docker daemon inside the Minikube node (minikube ssh, then sudo systemctl restart docker) resolved it - pods moved from ImagePullBackOff to a clean Pulling state and eventually to Running.
+6. Day 2 follow-up: with disk space freed (13GB to 28GB, via docker system prune, Windows Disk Cleanup, and a diskpart VHDX compact), minikube image load succeeded on a rebuilt image (v4, with the Day 30 Langfuse dependency added) - confirming disk space, not the registry, was the root blocker for approaches (1) and (4). That image then failed to stay Running even as the sole pod on the cluster (Exit Code 137, OOMKilled), isolating the problem to memory rather than disk or networking: the langfuse package's dependency tree (opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc, and related packages) adds enough runtime memory that this particular image no longer fits inside the available cluster memory on this 8GB machine, even running alone. The manifest was reverted to the smaller, proven-stable :latest tag (no langfuse) for the final teardown and submission; see observability_notes.md for the resulting in-cluster tracing gap and the fix identified for it.
 
-The pattern across all five: this machine (8GB RAM, Docker Desktop on WSL2, no GPU) struggles specifically with large (3.47GB) image transfers and multi-container memory pressure, not with the Kubernetes configuration itself - every manifest, probe, and command here is correct and was eventually proven live.
+The pattern across all six: this machine (8GB RAM, Docker Desktop on WSL2, no GPU) struggles specifically with large image transfers, disk space for those transfers, and memory for ML-heavy containers - not with the Kubernetes configuration itself. Every manifest, probe, and command here is correct and was proven live; the constraint is consistently the hardware, and each constraint was isolated with a specific, repeatable test rather than assumed.
 
 ## Summary
 
 | Step | Result |
 |---|---|
 | minikube start (5000MB) | Node Ready |
-| Images via Docker Hub registry | Pulled successfully after a daemon restart fix |
+| Images via Docker Hub registry, later via minikube image load | Both routes worked once their respective blockers (TLS handshake, disk space) were diagnosed and fixed |
 | Secret from .env via kubectl create secret | Created, no value in git |
 | kubectl apply -f k8s/ | All objects created |
-| Backend pods | Reached 1/1 Running - readiness probe passing against a live container |
+| Backend pods (stable image) | Reached 1/1 Running - readiness probe passing against a live container |
 | Live request via port-forward | Correct answer returned from the in-cluster pod |
 | Scale to 2, then 3 | Both confirmed - new pods created without disturbing existing ones |
 | Rolling update | New ReplicaSet created, old pods kept running - zero-downtime behaviour directly observed; rolled back once confirmed, due to memory limits on this 5GB cluster |
 | Teardown | Clean |
+| Langfuse-enabled image (v4) | Loaded successfully into the cluster but OOMKilled even as a single pod - memory-insufficient on this hardware, isolated and documented rather than worked around |
