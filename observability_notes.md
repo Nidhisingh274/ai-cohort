@@ -50,9 +50,13 @@ Latency varied widely across runs - 3.9s, 7.6s, 12.3s, 50.8s and once 84.3s for 
 
 The Day 29 backend pod was live-verified end-to-end via kubectl port-forward - a request sent directly to the in-cluster container returned the correct answer ("The annual deductible for the Gold PPO plan is $2,000"), confirming the deployed application logic works identically inside the cluster.
 
-The trace for that request did not appear in the Langfuse dashboard, however. Diagnosing this with kubectl exec found the root cause: the langfuse package was missing from requirements-docker.txt, so the image running in the cluster did not have it installed. The application's try/except around all Langfuse calls worked exactly as designed - the missing dependency failed silently, the chat still answered correctly, and no error reached the member - but it also meant no [LANGFUSE] error line was printed locally to flag the gap, since the import itself never ran (langfuse simply wasn't present in the container's Python environment).
+The trace for that request did not appear in the Langfuse dashboard. Diagnosing this with kubectl exec found the first root cause: the langfuse package was missing from requirements-docker.txt, so the image running in the cluster did not have it installed. The application's try/except around all Langfuse calls worked exactly as designed - the missing dependency failed silently, the chat still answered correctly, and no error reached the member.
 
-The fix (adding langfuse to requirements-docker.txt and rebuilding the image) was identified and started, but a full rebuild on this machine - which has repeatedly taken 20 minutes to several hours for dependency-tree changes, documented in docker_notes.md and k8s_notes.md - did not complete within this submission's time window. It is left as an open, understood item: local traces from this same code are fully confirmed above; in-cluster trace delivery is diagnosed and fixed in principle, pending one more image rebuild and redeploy.
+That dependency was added and the image was rebuilt (tag v4) and pushed to Docker Hub - confirmed with pip show langfuse inside the built image before deploying. Loading it into the Minikube cluster required freeing disk space first (13GB to 28GB, via docker system prune, Windows Disk Cleanup, and a diskpart VHDX compact - see k8s_notes.md), after which minikube image load succeeded.
+
+Once running, though, the v4 pod was OOMKilled (Exit Code 137) - and this held even when it was the only pod on the cluster, isolating the cause to memory rather than to co-scheduled pods or disk. The langfuse package's dependency tree (opentelemetry-sdk, opentelemetry-exporter-otlp-proto-grpc, and related instrumentation packages) adds enough runtime memory overhead that this image no longer fits inside the available cluster memory on this 8GB development machine, even running alone. The plain application image (without langfuse) has run stably at 1-2 replicas on the same cluster throughout this project, so the constraint is specifically the added observability dependency, not the application itself.
+
+For the final submission, the deployment was reverted to the smaller, proven-stable image so the cluster is left in a working, teardown-ready state rather than crash-looping. The path to a working fix is the one already scoped in v2_roadmap.md: split the backend into a lightweight API service and a separate embedding/retrieval service, which would also bring the image small enough for langfuse's dependencies to fit comfortably.
 
 ## kubectl Debugging
 
@@ -75,7 +79,7 @@ kubectl logs -l app=backend --tail=20 returned:
 
 Error from server (BadRequest): container "backend" in pod "backend-...-sw64z" is waiting to start: image can't be pulled
 
-This is the key lesson from the exercise: logs are only available once a container has started. For a pod stuck before that point, describe is the tool - logs will just tell you why it has nothing to show you. The practical loop is describe first to find out where in the lifecycle it stalled, then logs once the container is actually running. This same loop was used again later, on a real CreateContainerConfigError, and found a genuine root cause (a missing dependency) rather than a transient issue - see the OOM and dependency notes in k8s_notes.md.
+This is the key lesson from the exercise: logs are only available once a container has started. For a pod stuck before that point, describe is the tool - logs will just tell you why it has nothing to show you. The practical loop is describe first to find out where in the lifecycle it stalled, then logs once the container is actually running. This same loop was used again on two further real failures during this project (a CreateContainerConfigError and repeated OOMKilled restarts) and found genuine root causes each time - a missing dependency, then a memory ceiling - rather than transient issues. See k8s_notes.md for the full sequence.
 
 ## Production Alert Sketch
 
@@ -91,9 +95,9 @@ Two more worth adding once there is baseline data: cache hit rate dropping sharp
 
 ## What This Confirms and What Remains
 
-Confirmed: Langfuse tracing works correctly against this application (8 local traces with full latency/token/prompt/response data), the deployed Kubernetes cluster runs the identical application logic and answers correctly when hit directly, and the resilience design (try/except around every observability call) meant a missing dependency degraded gracefully rather than breaking the product - exactly the behaviour the Day 24 resilience layer was built for.
+Confirmed: Langfuse tracing works correctly against this application (8 local traces with full latency/token/prompt/response data), the deployed Kubernetes cluster runs the identical application logic and answers correctly when hit directly, the missing-dependency gap was found, fixed, and rebuilt into a working image (verified with pip show langfuse inside it, and confirmed loadable into the cluster), and the resilience design (try/except around every observability call) meant every failure mode encountered - missing dependency, then memory ceiling - degraded gracefully rather than breaking the product.
 
-Remaining: completing one image rebuild with langfuse present in requirements-docker.txt, then re-running the in-cluster verification above and confirming the trace lands in the dashboard.
+Remaining: the langfuse-enabled image needs more memory than this 8GB development machine's cluster can currently give it, even running alone. This is a hardware/architecture constraint, not an unfixed code or configuration issue - the fix (splitting the backend so the traced API service is lightweight) is scoped in v2_roadmap.md as a P1 item.
 
 ## Summary
 
@@ -102,8 +106,8 @@ Remaining: completing one image rebuild with langfuse present in requirements-do
 | langfuse installed and wired into /chat | Done |
 | Latency, tokens, full prompt and response traced | Done, confirmed in dashboard |
 | Keys in .env only, never committed | Done |
-| Traces visible in Langfuse dashboard | Confirmed with timestamps and values above |
+| Traces visible in Langfuse dashboard | Confirmed with timestamps and values above (local) |
 | kubectl describe on a failing pod | Done - events, probes and Secret wiring all inspected |
 | kubectl logs on a pod that never started | Done - returned the "image can't be pulled" BadRequest |
 | Production alert sketch | Done - error rate, p95 latency, daily cost ceiling |
-| Traces from a pod running inside the cluster | Diagnosed (missing dependency) and fixed in principle; rebuild pending |
+| Traces from a pod running inside the cluster | Dependency gap found and fixed; image built and loadable; blocked by memory ceiling on this hardware, isolated via a single-pod test - architectural fix scoped in v2_roadmap.md |
