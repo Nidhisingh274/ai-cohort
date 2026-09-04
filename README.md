@@ -72,7 +72,7 @@ UI at http://localhost:8501, API at http://localhost:8000.
 
 ## Known Limitations
 
-Kubernetes deployment. The backend pod reached 1/1 Running in the cluster after pushing images to Docker Hub (five approaches tried before this one worked - see k8s_notes.md). Scaling to 3 replicas, a rolling update showing the zero-downtime pattern, and two live scenario requests sent directly to the in-cluster pod via kubectl port-forward were all confirmed working. One item remains open: traces from the in-cluster pod did not reach the Langfuse dashboard, because a dependency (langfuse) was missing from the Docker requirements file used to build the deployed image - diagnosed, understood, and fixed in the source, pending one more image rebuild that did not complete within this submission's time window on this 8GB machine. See k8s_notes.md and observability_notes.md.
+Kubernetes deployment. The backend pod reached 1/1 Running in the cluster, scaling to 3 replicas and a rolling update showing the zero-downtime pattern were both confirmed working, and live scenario requests sent directly to in-cluster pods via kubectl port-forward returned correct answers. One item remains open: tracing from inside the cluster. A missing dependency (langfuse) was found, fixed, and rebuilt into a new image, confirmed installed with pip show langfuse - but that image was then OOMKilled even running alone on this 8GB machine, isolating the constraint to memory rather than the earlier dependency or disk-space issues. The proven-stable image (without langfuse) is what the cluster runs for the final submission. See k8s_notes.md and observability_notes.md for the full diagnostic sequence, and v2_roadmap.md for the architectural fix (splitting the backend into a lightweight service) that would resolve this.
 
 Corpus coverage. The knowledge base is six chunks. Questions about physical therapy, dental and vision are declined because the documents genuinely do not cover them - correct behaviour, but a thin corpus.
 
@@ -99,3 +99,5 @@ Synthetic data only. Formal compliance review is required before this touches re
 ## Demo
 
 [Watch the demo video](https://drive.google.com/file/d/1-Yz0gqU3Sl2H4Qjf0q2gD2M5xMhf5A_b/view?usp=drive_link)
+
+The tracing shown in the video is from the local backend. The same code was also deployed and verified on a Kubernetes cluster (see the Kubernetes deployment note under Known Limitations, and k8s_notes.md, for the full details including the in-cluster trace-delivery gap).
